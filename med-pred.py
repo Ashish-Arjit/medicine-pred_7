@@ -1,7 +1,11 @@
+from fastapi import FastAPI, Query
+from fastapi.responses import JSONResponse
 import pandas as pd
 
 # Load dataset
 df = pd.read_csv("demo3.csv")
+
+app = FastAPI(title="Medicine Recommendation API")
 
 def classify_age_group(age):
     if age < 1:
@@ -31,132 +35,55 @@ def parse_duration(duration_str):
             days = 7
     return days
 
-def search_medicine_multiple(symptoms_input, age, gender, pregnancy, feeding, df):
+@app.get("/recommend")
+def search_medicine_multiple(
+    symptoms: str = Query(..., description="Comma-separated symptoms"),
+    age: int = Query(..., ge=0, description="Age of the patient"),
+    gender: str = Query(..., regex="^(male|female)$", description="Gender: male/female"),
+    pregnancy: str = Query("no", regex="^(yes|no)$", description="Pregnancy status"),
+    feeding: str = Query("no", regex="^(yes|no)$", description="Feeding a baby"),
+    duration: str = Query("2 days", description="How long suffering (e.g. '2 days', '1 week')")
+):
     age_group = classify_age_group(age)
-    symptoms = [sym.strip().lower() for sym in symptoms_input.split(",")]
+    symptoms_list = [sym.strip().lower() for sym in symptoms.split(",")]
+    duration_days = parse_duration(duration)
     results = []
 
-    # Ask duration
-    duration = input("From when are you suffering this problem? (e.g. 2 days, 1 week): ")
-    duration_days = parse_duration(duration)
-
     if duration_days > 7:
-        return (f"⚠️ You are suffering for more than 1 week ({duration}).\n"
-                f"➡️ Please consult a doctor for proper medical advice.")
+        return JSONResponse(content={
+            "warning": f"You are suffering for more than 1 week ({duration}). Please consult a doctor."
+        })
 
-    for symptom in symptoms:
+    for symptom in symptoms_list:
         filtered_df = df[
             df['Symptom'].str.lower().str.contains(symptom, na=False) &
             (df['Age Group'].str.strip() == age_group)
         ]
 
         if filtered_df.empty:
-            results.append(f"No suitable medicine found for '{symptom}' in age group '{age_group}'.")
+            results.append({
+                "symptom": symptom,
+                "message": f"No suitable medicine found for '{symptom}' in age group '{age_group}'."
+            })
             continue
 
-        # List medicines
-        possible_meds = []
-        for meds in filtered_df['Medicine'].unique():
-            parts = [m.strip() for m in meds.split('+')]
-            possible_meds.extend(parts)
-        possible_meds = list(dict.fromkeys(possible_meds))  # deduplicate
+        best = filtered_df.iloc[0]
+        results.append({
+            "symptom": symptom,
+            "medicine": best["Medicine"],
+            "dosage": best["Dosage"],
+            "age_group": age_group,
+            "duration": duration
+        })
 
-        print(f"\nFor '{symptom}', recommended medicines for '{age_group}':")
-        for i, med in enumerate(possible_meds, 1):
-            print(f"{i}. {med}")
-
-        used_before = input("Have you used any medicine before? (yes/no): ").strip().lower()
-
-        if used_before == "yes":
-            chosen = input("Enter medicine numbers separated by commas OR type another medicine name: ").strip()
-
-            if chosen.isdigit() or "," in chosen:
-                chosen_indices = [int(x.strip())-1 for x in chosen.split(",") if x.strip().isdigit()]
-                chosen_meds = [possible_meds[i].lower() for i in chosen_indices if 0 <= i < len(possible_meds)]
-            else:
-                # user entered a custom medicine
-                custom_med = chosen.lower()
-                if df['Medicine'].str.lower().str.contains(custom_med).any():
-                    chosen_meds = [custom_med]
-                    print(f"✅ {custom_med} is a valid medicine found in dataset.")
-                else:
-                    chosen_meds = []
-                    print(f"⚠️ {custom_med} is not found in dataset. Please verify with doctor.")
-
-            if len(chosen_meds) == len(possible_meds):
-                results.append(f"For '{symptom}' (since {duration}):\n"
-                               f"⚠️ You already used all recommended medicines.\n"
-                               f"➡️ Dosage may need adjustment as per your age. Consult doctor.")
-            elif chosen_meds:
-                results.append(f"For '{symptom}' (since {duration}):\n"
-                               f"✅ You already used: {', '.join(chosen_meds)}")
-            else:
-                results.append(f"For '{symptom}' (since {duration}):\n"
-                               f"⚠️ Invalid medicine entered.\n"
-                               f"Recommended: {', '.join(possible_meds)}")
-
-        else:
-            best = filtered_df.iloc[0]
-            results.append(f"For '{symptom}' (since {duration}):\n"
-                           f"Medicine: {best['Medicine']}\nDosage: {best['Dosage']}")
-
-    # Pregnancy/Feeding warnings
     if gender == "female" and age >= 18:
         if pregnancy == "yes":
-            results.append("\n⚠️ Note: You mentioned pregnancy.\n"
-                           "➡️ Some medicines may not be safe. Please consult a doctor before taking them.")
+            results.append({
+                "note": "Pregnancy detected. Some medicines may not be safe. Please consult a doctor."
+            })
             if feeding == "yes":
-                results.append("\n⚠️ Additional Note: You are feeding a baby.\n"
-                               "➡️ Extra caution required with medicines. Doctor advice strongly recommended.")
+                results.append({
+                    "note": "You are feeding a baby. Extra caution required with medicines."
+                })
 
-    return "\n\n".join(results)
-
-
-# ---------------- RUNNING THE PROGRAM ----------------
-# Symptoms
-while True:
-    symptoms_input = input("Enter your symptoms separated by commas (e.g. Fever, Cough): ").strip()
-    if symptoms_input:
-        break
-
-# Age
-while True:
-    try:
-        age = int(input("Enter your age: ").strip())
-        if age >= 0:
-            break
-    except ValueError:
-        print("⚠️ Please enter a valid number for age.")
-
-# Gender as M/F
-while True:
-    gender_input = input("Enter your gender (M/F): ").strip().lower()
-    if gender_input in ["m", "f"]:
-        gender = "male" if gender_input == "m" else "female"
-        break
-    else:
-        print("⚠️ Please enter 'M' for Male or 'F' for Female.")
-
-# Pregnancy + Feeding only if female & adult
-pregnancy = "no"
-feeding = "no"
-if gender == "female" and age >= 18:
-    while True:
-        pregnancy = input("Are you currently pregnant? (yes/no): ").strip().lower()
-        if pregnancy in ["yes", "no"]:
-            break
-        else:
-            print("⚠️ Please answer yes or no.")
-
-    if pregnancy == "yes":
-        while True:
-            feeding = input("Are you feeding a baby? (yes/no): ").strip().lower()
-            if feeding in ["yes", "no"]:
-                break
-            else:
-                print("⚠️ Please answer yes or no.")
-
-# Final execution
-output = search_medicine_multiple(symptoms_input, age, gender, pregnancy, feeding, df)
-print("\nFinal Result:\n")
-print(output)
+    return {"results": results}
