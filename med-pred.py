@@ -1,9 +1,14 @@
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 import pandas as pd
+import os
+
+# Always find demo3.csv relative to the project root
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CSV_PATH = os.path.join(BASE_DIR, "demo3.csv")
 
 # Load dataset
-df = pd.read_csv("demo3.csv")
+df = pd.read_csv(CSV_PATH)
 
 app = FastAPI(title="Medicine Recommendation API")
 
